@@ -2,12 +2,16 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { DiscordUser } from '../discord/discord.types'
 import { Client } from '@notionhq/client'
-import { NotionPropertyIds } from './notion.types'
+import { NotionDiscordUser, NotionPropertyIds } from './notion.types'
+
+const getTextFromNotionTable = (tableDataItem: any): string =>
+  tableDataItem.results[0].rich_text.plain_text
 
 @Injectable()
 export class NotionService implements OnModuleInit {
   private readonly logger = new Logger(NotionService.name)
   private client: Client
+  private localCacheUsers: NotionDiscordUser[]
   private databaseId: string
 
   constructor(private configService: ConfigService) {
@@ -18,12 +22,51 @@ export class NotionService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     this.logger.log(`Initializing ${NotionService.name}`)
+    this.localCacheUsers = await this.listTableItems()
+  }
+
+  userExists(discordId: string): boolean {
+    return this.localCacheUsers.some((user) => user.discordId === discordId)
+  }
+
+  async updateNotionField(discordUser: DiscordUser): Promise<boolean> {
+    const cachedUser = this.localCacheUsers.find(
+      (user) => user.discordId === discordUser.id,
+    )
+    if (!cachedUser) {
+      this.logger.error(`User ${discordUser.id} not found in cache`)
+      return
+    }
+    try {
+      await this.client.pages.update({
+        page_id: cachedUser.notionPageId,
+        properties: {
+          bioDescription: {
+            type: 'rich_text',
+            rich_text: [
+              {
+                type: 'text',
+                text: {
+                  content: discordUser.bioDescription,
+                },
+              },
+            ],
+          },
+        },
+      })
+      this.logger.log(`Updated biography for user ${discordUser.username}`)
+      await this.listTableItems(true)
+      return true
+    } catch (error) {
+      this.logger.error(error)
+      return false
+    }
   }
 
   async addFieldToNotion(discordUser: DiscordUser): Promise<void> {
     const database_id = this.databaseId
     try {
-      const response = await this.client.pages.create({
+      await this.client.pages.create({
         parent: {
           database_id,
         },
@@ -77,13 +120,21 @@ export class NotionService implements OnModuleInit {
       this.logger.log(
         `Added biography: ${discordUser.bioDescription} for ${discordUser.username}`,
       )
+      await this.listTableItems(true)
     } catch (error) {
       this.logger.error(error.body)
     }
   }
 
-  async listTableItems(): Promise<any[]> {
+  async listTableItems(invalidateCache = false): Promise<NotionDiscordUser[]> {
     this.logger.log('Listing table items...')
+    if (this.localCacheUsers && !invalidateCache) {
+      this.logger.log('Returning cached users')
+      return this.localCacheUsers
+    }
+
+    this.logger.log('♻️  Fetching users from Notion...')
+
     const database_id = this.databaseId
     try {
       const databasePages = await this.client.databases.query({
@@ -95,9 +146,13 @@ export class NotionService implements OnModuleInit {
           },
         ],
       })
-      this.logger.log(databasePages)
 
       const users = databasePages.results.map(async (page) => {
+        const discordIdRequest = this.client.pages.properties.retrieve({
+          page_id: page.id,
+          property_id: NotionPropertyIds.DISCORD_ID,
+        })
+
         const usernameRequest = this.client.pages.properties.retrieve({
           page_id: page.id,
           property_id: NotionPropertyIds.USERNAME,
@@ -114,29 +169,36 @@ export class NotionService implements OnModuleInit {
         })
 
         const [
+          discordIdRequestResponse,
           usernameResponse,
           usernameFourDigitsResponse,
           bioDescriptionResponse,
         ] = await Promise.all([
+          discordIdRequest,
           usernameRequest,
           usernameFourDigitsRequest,
           bioDescriptionRequest,
         ])
 
-        const username = (usernameResponse as any).results[0].rich_text
+        const discordId = (discordIdRequestResponse as any).results[0].title
           .plain_text
-        const usernameFourDigits = (usernameFourDigitsResponse as any)
-          .results[0].rich_text.plain_text
-        const bioDescription = (bioDescriptionResponse as any).results[0]
-          .rich_text.plain_text
+        const username = getTextFromNotionTable(usernameResponse)
+        const usernameFourDigits = getTextFromNotionTable(
+          usernameFourDigitsResponse,
+        )
+        const bioDescription = getTextFromNotionTable(bioDescriptionResponse)
 
         return {
+          discordId: discordId,
+          notionPageId: page.id, // Used to know which row and column to update
           name: `${username}#${usernameFourDigits}`,
           value: bioDescription,
         }
       })
 
-      return await Promise.all(users)
+      const notionUsers = await Promise.all(users)
+      this.localCacheUsers = notionUsers
+      return notionUsers
     } catch (e) {
       this.logger.error(e)
     }

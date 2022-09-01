@@ -16,6 +16,7 @@ import {
 import { ConfigService } from '@nestjs/config'
 import { NotionService } from '../notion/notion.service'
 import { DiscordUser } from './discord.types'
+import { NotionDiscordUser } from '../notion/notion.types'
 
 @Injectable()
 export class DiscordService {
@@ -88,25 +89,47 @@ export class DiscordService {
             usernameFourDigits,
             bioDescription,
           }
-          await this.notionService.addFieldToNotion(discordUser)
-          await interaction.reply(
-            `✅ Added ${username}#${usernameFourDigits} into the biography list of Matos members.`,
-          )
+
+          if (this.notionService.userExists(userId)) {
+            const successful = await this.notionService.updateNotionField(
+              discordUser,
+            )
+
+            if (successful) {
+              await interaction.reply(
+                `✅ Updated ${username}#${usernameFourDigits} biography .`,
+              )
+            } else {
+              await interaction.reply(`😭 Something went wrong updating!`)
+            }
+          } else {
+            await this.notionService.addFieldToNotion(discordUser)
+            await interaction.reply(
+              `✅ Added ${username}#${usernameFourDigits} into the biography list of Matos members.`,
+            )
+          }
         }
 
         if (interaction.commandName === DiscordCommandNames.LIST_MEMBERS) {
           const discordUsers = await this.notionService.listTableItems()
+          const embedMessages = this.buildEmbedMessage(discordUsers)
 
-          const exampleEmbed = new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle('Matos Verified Members ✅')
-            .addFields(discordUsers)
-
-          await interaction.reply({ embeds: [exampleEmbed] })
+          await interaction.reply({ embeds: embedMessages })
         }
       } catch (e) {
         await this.reportError(e, interaction)
       }
     })
+  }
+
+  buildEmbedMessage(discordUsers: NotionDiscordUser[]): EmbedBuilder[] {
+    const embedMessages = discordUsers.map((discordUser) => {
+      return new EmbedBuilder()
+        .setColor(0x0099ff)
+        .setTitle(discordUser.name)
+        .setDescription(discordUser.value)
+    })
+
+    return embedMessages
   }
 }
