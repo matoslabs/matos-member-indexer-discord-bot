@@ -32,5 +32,5 @@ const listMembersCommand = new SlashCommandBuilder()
 
 export const discordCommands = [
   addBioCommand.toJSON(),
-  listMembersCommand.toJSON(),
+  // listMembersCommand.toJSON(),
 ]

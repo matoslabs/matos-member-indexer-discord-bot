@@ -2,10 +2,10 @@ import {
   Client,
   REST,
   Routes,
-  GatewayIntentBits,
   Interaction,
   CacheType,
-  EmbedBuilder,
+  Partials,
+  GatewayIntentBits,
 } from 'discord.js'
 import { Injectable, Logger } from '@nestjs/common'
 import {
@@ -16,13 +16,14 @@ import {
 import { ConfigService } from '@nestjs/config'
 import { NotionService } from '../notion/notion.service'
 import { DiscordUser } from './discord.types'
-import { NotionDiscordUser } from '../notion/notion.types'
 
 @Injectable()
 export class DiscordService {
   private readonly logger = new Logger(DiscordService.name)
+  private lastMessageId
   private client: Client = new Client({
     intents: [GatewayIntentBits.Guilds],
+    partials: [Partials.Channel, Partials.Message],
   })
 
   constructor(
@@ -46,7 +47,10 @@ export class DiscordService {
     await this.registerSlashCommands()
     this.logger.log('🤖 DiscordBot is ready to receive commands. 🤖')
     this.client.login(token)
-    await this.addListeners()
+
+    this.client.on('ready', () => {
+      this.addListeners()
+    })
   }
 
   async registerSlashCommands(): Promise<void> {
@@ -69,11 +73,25 @@ export class DiscordService {
   }
 
   async addListeners(): Promise<void> {
+    this.createInitial()
     this.client.on('interactionCreate', async (interaction) => {
       try {
         if (!interaction.isCommand()) return
 
         if (interaction.commandName === DiscordCommandNames.BIO) {
+          const role = interaction.guild.roles.cache.find(
+            (role) => role.name === 'club',
+          )
+          const hasRole = (interaction.member.roles as any).cache.has(role.id)
+          if (!hasRole) {
+            await interaction.reply({
+              content: `❌ only for @club members`,
+              ephemeral: true,
+            })
+
+            return
+          }
+
           const userId = interaction.user.id
           const username = interaction.user.username
           const usernameFourDigits = interaction.user.discriminator
@@ -82,6 +100,14 @@ export class DiscordService {
           const bioDescription = interaction.options.getString(
             discordCommandOptions.BIO_DESCRIPTION,
           )
+
+          if (bioDescription.length > 200) {
+            await interaction.reply({
+              content: `❌ to long didnt read. Make it shorter (max 200 chars)`,
+              ephemeral: true,
+            })
+            return
+          }
 
           const discordUser: DiscordUser = {
             id: userId,
@@ -95,26 +121,25 @@ export class DiscordService {
               discordUser,
             )
 
+            this.updateSelectedMessage()
             if (successful) {
-              await interaction.reply(
-                `✅ Updated ${username}#${usernameFourDigits} biography .`,
-              )
+              await interaction.reply({
+                content: `✅ Updated`,
+                ephemeral: true,
+              })
             } else {
-              await interaction.reply(`😭 Something went wrong updating!`)
+              await interaction.reply({
+                content: `😭 Something went wrong updating!`,
+                ephemeral: true,
+              })
             }
           } else {
             await this.notionService.addFieldToNotion(discordUser)
-            await interaction.reply(
-              `✅ Added ${username}#${usernameFourDigits} into the biography list of Matos members.`,
-            )
+            await interaction.reply({
+              content: `✅ Added ${username}#${usernameFourDigits} into the biography list of Matos members.`,
+              ephemeral: true,
+            })
           }
-        }
-
-        if (interaction.commandName === DiscordCommandNames.LIST_MEMBERS) {
-          const discordUsers = await this.notionService.listTableItems()
-          const embedMessages = this.buildEmbedMessage(discordUsers)
-
-          await interaction.reply({ embeds: embedMessages })
         }
       } catch (e) {
         await this.reportError(e, interaction)
@@ -122,14 +147,26 @@ export class DiscordService {
     })
   }
 
-  buildEmbedMessage(discordUsers: NotionDiscordUser[]): EmbedBuilder[] {
-    const embedMessages = discordUsers.map((discordUser) => {
-      return new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle(discordUser.name)
-        .setDescription(discordUser.value)
-    })
+  async createInitial() {
+    const channelId = this.configService.get<string>('CHANNEL_ID')
+    const channel = (await this.client.channels.fetch(channelId)) as any
+    const msg = await channel.send('...')
+    this.lastMessageId = msg.id
+    this.updateSelectedMessage()
+  }
 
-    return embedMessages
+  async updateSelectedMessage(): Promise<void> {
+    const _channel = (await this.client.channels.fetch(
+      this.configService.get<string>('CHANNEL_ID'),
+    )) as any
+    const msg = await _channel.messages.fetch(this.lastMessageId)
+    const discordUsers = await this.notionService.listTableItems()
+    const message = discordUsers
+      .map(
+        (discordUser) =>
+          `<@${discordUser.discordId}> - ${discordUser.value} \n`,
+      )
+      .join('')
+    await msg.edit(message)
   }
 }

@@ -8,4 +8,5 @@ export const config = () => ({
     accessToken: process.env.NOTION_ACCESS_TOKEN,
     databaseId: process.env.NOTION_DATABASE_ID,
   },
+  CHANNEL_ID: process.env.CHANNEL_ID,
 })
