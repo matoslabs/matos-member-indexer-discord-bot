@@ -139,6 +139,7 @@ export class DiscordService {
               content: `✅ Added ${username}#${usernameFourDigits} into the biography list of Matos members.`,
               ephemeral: true,
             })
+            this.updateSelectedMessage()
           }
         }
       } catch (e) {

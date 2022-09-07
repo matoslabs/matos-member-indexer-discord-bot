@@ -8,7 +8,7 @@ export enum DiscordCommandNames {
 }
 
 export enum DiscordCommandDescription {
-  BIO = 'Add / update your biography in the list.',
+  BIO = 'Add or update your biography in the list. Only for @club members and max 200 chars',
   LIST_MEMBERS = 'Show the biography of all the registered Matos members.',
 }
 
