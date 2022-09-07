@@ -1,0 +1,33 @@
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: matos-member-indexer-discord-bot
+    namespace: prod
+    labels:
+      app: matos-member-indexer-discord-bot
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: matos-member-indexer-discord-bot
+    template:
+      metadata:
+        labels:
+          app: matos-member-indexer-discord-bot
+      spec:
+        containers:
+          - name: matos-member-indexer-discord-bot
+            image: rg.nl-ams.scw.cloud/ledger/matos-member-indexer-discord-bot:1.0.1
+            env:
+            - name: DISCORD_TOKEN
+              value: ""
+            - name: CHANNEL_ID
+              value: ""
+            - name: DISCORD_CLIENT_ID
+              value: ""
+            - name: NOTION_ACCESS_TOKEN
+              value: ""
+            - name: NOTION_DATABASE_ID
+              value: ""
+        imagePullSecrets:
+          - name: registry-secret
